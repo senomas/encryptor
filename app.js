@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 
+const debug = require('debug')('encryptor');
+
 const program = require("commander");
 const os = require("os");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const stream = require("stream");
 const KeyEncoder = require("key-encoder");
 const execSync = require("child_process").execSync;
 const yaml = require("js-yaml");
+
+const keyEncoder = new KeyEncoder("secp256k1");
 
 const fconfig = path.join(os.homedir(), ".seno-encryptor");
 if (!fs.existsSync(fconfig)) {
@@ -29,7 +32,7 @@ async function readMeta(fn) {
         const input = fs.createReadStream(fn);
         const lines = [];
         let buf;
-        let ndone = true;
+        let state = 0;
         input.on("data", chunk => {
           if (buf) {
             buf = Buffer.concat([buf, chunk]);
@@ -40,13 +43,19 @@ async function readMeta(fn) {
           if (bline.length > 1) {
             buf = Buffer.from(bline.slice(-1)[0], "utf8");
             bline.slice(0, -1).forEach(bl => {
-              if (ndone) {
-                if (bl.length > 0) {
-                  lines.push(bl);
-                } else {
-                  ndone = false;
+              if (state === 0) {
+                if (bl !== "=== BEGIN SENO-ENCRYPTOR ===") {
+                  return reject(new Error("Invalid file signature"));
+                }
+                state = 1;
+              } else if (state === 1) {
+                if (bl === "=== END SENO-ENCRYPTOR ===") {
                   input.close();
                   resolve(lines.join("\n"));
+                } else if (bl.startsWith("SENO-ENCRYPTOR ")) {
+                  lines.push(bl.slice(15));
+                } else {
+                  return reject(new Error("Invalid file signature"));
                 }
               }
             });
@@ -54,13 +63,19 @@ async function readMeta(fn) {
           }
         });
         input.on("end", () => {
-          resolve(null);
+          return reject(new Error("Invalid file signature"));
         });
       } catch (err) {
         reject(err);
       }
     });
     meta = yaml.safeLoad(data);
+    const pubPem = keyEncoder.encodePublic(Buffer.from(meta.key, "base64"), "raw", "pem");
+    const sig = crypto.createVerify("sha512");
+    sig.update(JSON.stringify(meta.users));
+    if (!sig.verify(pubPem, Buffer.from(meta.sig, "base64"))) {
+      throw new Error("Invalid meta signature");
+    };
     const ux = meta.users.filter(user => user.pub === upub)[0];
     if (!ux) {
       console.log("Dont have access to it");
@@ -93,7 +108,6 @@ async function readMeta(fn) {
     user.enc = Buffer.concat([aes.update(aesKey), aes.final()]).toString(
       "base64"
     );
-    const keyEncoder = new KeyEncoder("secp256k1");
     const pkeyPem = keyEncoder.encodePrivate(key.getPrivateKey(), "raw", "pem");
     const sig = crypto.createSign("sha512");
     sig.update(JSON.stringify([user]));
@@ -103,6 +117,39 @@ async function readMeta(fn) {
       sig: sig.sign(pkeyPem, "base64")
     };
   }
+  return { meta, aesKey };
+}
+
+async function updateUser(meta, users) {
+  const key = crypto.createECDH("secp256k1");
+  key.generateKeys();
+  aesKey = crypto.randomBytes(32);
+  users.forEach(user => {
+    const pubPem = keyEncoder.encodePublic(Buffer.from(user.pub, "base64"), "raw", "pem");
+    const sig = crypto.createVerify("sha512");
+    sig.update(
+      JSON.stringify({ user: user.user, email: user.email, pub: user.pub })
+    );
+    if (!sig.verify(pubPem, Buffer.from(user.sig, "base64"))) {
+      throw new Error(`Invalid user signature for ${JSON.stringify(user)}`);
+    };
+    const aes = crypto.createCipheriv(
+      "aes256",
+      key.computeSecret(Buffer.from(user.pub, "base64")),
+      key.getPublicKey().slice(0, 16)
+    );
+    user.enc = Buffer.concat([aes.update(aesKey), aes.final()]).toString(
+      "base64"
+    );
+  });
+  const pkeyPem = keyEncoder.encodePrivate(key.getPrivateKey(), "raw", "pem");
+  const sig = crypto.createSign("sha512");
+  sig.update(JSON.stringify(users));
+  meta = {
+    key: key.getPublicKey("base64"),
+    users,
+    sig: sig.sign(pkeyPem, "base64")
+  };
   return { meta, aesKey };
 }
 
@@ -116,7 +163,7 @@ async function decrypt(fn, meta, aesKey, output) {
     try {
       const input = fs.createReadStream(fn);
       let buf;
-      let data = false;
+      let state = 0;
       input.on("data", chunk => {
         if (buf) {
           buf = Buffer.concat([buf, chunk]);
@@ -127,14 +174,23 @@ async function decrypt(fn, meta, aesKey, output) {
         if (bline.length > 1) {
           buf = Buffer.from(bline.slice(-1)[0], "utf8");
           bline.slice(0, -1).forEach(bl => {
-            if (data) {
+            if (state === 0) {
+              if (bl !== "=== BEGIN SENO-ENCRYPTOR ===") {
+                return reject(new Error("Invalid file signature"));
+              }
+              state = 1;
+            } else if (state === 1) {
+              if (bl === "=== END SENO-ENCRYPTOR ===") {
+                state = 2;
+              } else if (bl.startsWith("SENO-ENCRYPTOR ")) {
+                // ignore
+              } else {
+                return reject(new Error("Invalid file signature"));
+              }
+            } else if (state === 2) {
               output.write(
                 aesd.update(Buffer.from(bl, "base64")).toString("utf8")
               );
-            } else {
-              if (bl.length === 0) {
-                data = true;
-              }
             }
           });
         }
@@ -150,11 +206,55 @@ async function decrypt(fn, meta, aesKey, output) {
   });
 }
 
+async function encrypt(fn, meta, aesKey, ftmp) {
+  const aes = crypto.createCipheriv(
+    "aes256",
+    aesKey,
+    Buffer.from(meta.key, "base64").slice(0, 16)
+  );
+
+  const input = fs.createReadStream(ftmp, { highWaterMark: 1024 });
+  const output = fs.createWriteStream(fn);
+
+  output.write("=== BEGIN SENO-ENCRYPTOR ===\n");
+  output.write(
+    yaml
+      .safeDump(meta)
+      .split("\n")
+      .map(ln => "SENO-ENCRYPTOR " + ln)
+      .join("\n")
+  );
+  output.write("\n=== END SENO-ENCRYPTOR ===\n");
+
+  await new Promise((resolve, reject) => {
+    input.on("data", chunk => {
+      output.write(aes.update(chunk).toString("base64"));
+      output.write("\n");
+    });
+    input.on("end", () => {
+      output.write(aes.final().toString("base64"));
+      output.write("\n");
+      resolve();
+    });
+  });
+}
+
+async function waitStreamClose(stream) {
+  return new Promise(resolve => {
+    stream.on("close", () => {
+      resolve();
+    });
+  });
+}
 program
   .command("init [user] [email]")
   .description("create asymetric key")
   .option("-f, --force", "Overwrite existing config")
   .action((user, email, options) => {
+    if (!user || !email) {
+      program.help();
+      process.exit(1);
+    }
     if (fs.existsSync(fconfig) && !options.force) {
       console.log("config already exist. use --force to overwrite");
       process.exit(1);
@@ -162,7 +262,6 @@ program
     const key = crypto.createECDH("secp256k1");
     key.generateKeys();
 
-    const keyEncoder = new KeyEncoder("secp256k1");
     const pkeyPem = keyEncoder.encodePrivate(key.getPrivateKey(), "raw", "pem");
     const sig = crypto.createSign("sha512");
     sig.update(
@@ -192,108 +291,119 @@ program
   });
 
 program
-  .command("user file")
+  .command("user [file]")
   .description("edit file users")
   .action(async fn => {
+    if (!fn) {
+      program.help();
+      process.exit(1);
+    }
     if (!fs.existsSync(fn)) {
-      console.log("file ${fn}");
+      console.log(`file ${fn} not exist`);
       process.exit(1);
     }
-    if (!fs.existsSync(fconfig)) {
-      console.log("config not exist. init first");
-      process.exit(1);
-    }
-    const config = JSON.parse(fs.readFileSync(fconfig));
-    const ukey = crypto.createECDH("secp256k1");
-    ukey.setPrivateKey(config.key, "base64");
     const ftmp = path.join(
+      path.dirname(fn),
+      path.basename(fn, path.extname(fn)) + ".encryptor" + path.extname(fn)
+    );
+    const ftmpMeta = path.join(
       path.dirname(fn),
       path.basename(fn) + ".encryptor.json"
     );
-    const rl = readline.createInterface({
-      input: fs.createReadStream(fn),
-      crlfDelay: Infinity
-    });
-    let state = 0;
-    const metas = [];
-    const meta = await new Promise((resolve, reject) => {
-      rl.on("line", line => {
-        if (state === 0) {
-          if (line.length === 0) {
-            state = 1;
-            resolve(yaml.safeLoad(metas.join("\n")));
-            rl.close();
-          } else {
-            metas.push(line);
-          }
-        }
-      });
-    });
-    fs.writeFileSync(
-      ftmp,
-      JSON.stringify(
-        meta.users.map(u => ({
-          user: u.user,
-          email: u.email,
-          pub: u.pub,
-          sig: u.sig
-        })),
-        undefined,
-        2
-      )
-    );
-    execSync(`code --wait ${ftmp}`);
-    fs.unlinkSync(ftmp);
+    try {
+      const { meta, aesKey } = await readMeta(fn);
+      const otmp = fs.createWriteStream(ftmp);
+      await decrypt(fn, meta, aesKey, otmp);
+      otmp.close();
+      await waitStreamClose(otmp);
+      fs.writeFileSync(
+        ftmpMeta,
+        JSON.stringify(
+          meta.users.map(u => ({
+            user: u.user,
+            email: u.email,
+            pub: u.pub,
+            sig: u.sig
+          })),
+          undefined,
+          2
+        )
+      );
+      execSync(`${config.editor} ${ftmpMeta}`);
+      const users = JSON.parse(fs.readFileSync(ftmpMeta));
+      const { meta: nmeta , aesKey: naesKey } = await updateUser(meta, users);
+      await encrypt(fn, nmeta, naesKey, ftmp);
+      fs.unlinkSync(ftmp);
+      fs.unlinkSync(ftmpMeta);
+    } catch (err) {
+      debug(err);
+      console.log(err.message);
+      fs.unlinkSync(ftmp);
+      fs.unlinkSync(ftmpMeta);
+      process.exit(1);
+    }
   });
 
 program
   .command("cat [file]")
   .description("view encrypted file")
   .action(async fn => {
+    if (!fn) {
+      program.help();
+      process.exit(1);
+    }
     if (!fs.existsSync(fn)) {
       console.log(`file ${fn} not exist`);
       process.exit(1);
     }
-    const { meta, aesKey } = await readMeta(fn);
-    await decrypt(fn, meta, aesKey, process.stdout);
-    console.log();
+    try {
+      const { meta, aesKey } = await readMeta(fn);
+      await decrypt(fn, meta, aesKey, process.stdout);
+      console.log();
+    } catch (err) {
+      debug(err);
+      console.log(err.message);
+      process.exit(1);
+    }
   });
 
 program
   .command("edit [file]")
   .description("edit encrypted file")
   .action(async fn => {
-    const { meta, aesKey } = await readMeta(fn);
+    if (!fn) {
+      program.help();
+      process.exit(1);
+    }
     const ftmp = path.join(
       path.dirname(fn),
       path.basename(fn, path.extname(fn)) + ".encryptor" + path.extname(fn)
     );
-    execSync(`${config.editor} ${ftmp}`);
-
-    const aes = crypto.createCipheriv(
-      "aes256",
-      aesKey,
-      Buffer.from(meta.key, "base64").slice(0, 16)
-    );
-
-    const input = fs.createReadStream(ftmp, { highWaterMark: 1024 });
-    const output = fs.createWriteStream(fn);
-
-    output.write(yaml.safeDump(meta));
-    output.write("\n");
-
-    await new Promise((resolve, reject) => {
-      input.on("data", chunk => {
-        output.write(aes.update(chunk).toString("base64"));
-        output.write("\n");
-      });
-      input.on("end", () => {
-        output.write(aes.final().toString("base64"));
-        output.write("\n");
-        resolve();
-      });
-    });
-    fs.unlinkSync(ftmp);
+    try {
+      const { meta, aesKey } = await readMeta(fn);
+      const otmp = fs.createWriteStream(ftmp);
+      await decrypt(fn, meta, aesKey, otmp);
+      otmp.close();
+      await waitStreamClose(otmp);
+      execSync(`${config.editor} ${ftmp}`);
+      await encrypt(fn, meta, aesKey, ftmp);
+      fs.unlinkSync(ftmp);
+    } catch (err) {
+      debug(err);
+      console.log(err.message);
+      fs.unlinkSync(ftmp);
+      process.exit(1);
+    }
   });
+
+program.on("command:*", () => {
+  program.help();
+  process.exit(1);
+});
+
+if (process.argv.length <= 2) {
+  program.help();
+  process.exit(1);
+}
 
 program.parse(process.argv);
