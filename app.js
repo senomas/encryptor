@@ -66,6 +66,7 @@ async function readMeta(fn) {
           return reject(new Error("Invalid file signature"));
         });
       } catch (err) {
+        debug(err);
         reject(err);
       }
     });
@@ -78,8 +79,7 @@ async function readMeta(fn) {
     };
     const ux = meta.users.filter(user => user.pub === upub)[0];
     if (!ux) {
-      console.log("Dont have access to it");
-      process.exit(1);
+      throw new Error("Dont have access to it");
     }
     const aesd = crypto.createDecipheriv(
       "aes256",
@@ -154,6 +154,9 @@ async function updateUser(meta, users) {
 }
 
 async function decrypt(fn, meta, aesKey, output) {
+  if (!fs.existsSync(fn)) {
+    return; 
+  }
   const aesd = crypto.createDecipheriv(
     "aes256",
     aesKey,
