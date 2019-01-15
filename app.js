@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const debug = require('debug')('encryptor');
+const debug = require("debug")("encryptor");
 
 const program = require("commander");
 const os = require("os");
@@ -13,19 +13,23 @@ const yaml = require("js-yaml");
 
 const keyEncoder = new KeyEncoder("secp256k1");
 
-const fconfig = path.join(os.homedir(), ".seno-encryptor");
-if (!fs.existsSync(fconfig)) {
-  console.log("config not exist. init first");
-  process.exit(1);
+function getConfig() {
+  const fconfig = path.join(os.homedir(), ".seno-encryptor");
+  if (!fs.existsSync(fconfig)) {
+    console.log("config not exist. init first");
+    process.exit(1);
+  }
+  const config = JSON.parse(fs.readFileSync(fconfig));
+  const ukey = crypto.createECDH("secp256k1");
+  ukey.setPrivateKey(config.key, "base64");
+  const upub = ukey.getPublicKey("base64");
+  return { config, ukey, upub };
 }
-const config = JSON.parse(fs.readFileSync(fconfig));
-const ukey = crypto.createECDH("secp256k1");
-ukey.setPrivateKey(config.key, "base64");
-const upub = ukey.getPublicKey("base64");
 
 async function readMeta(fn) {
   let meta;
   let aesKey;
+  const { config, ukey, upub } = getConfig();
   if (fs.existsSync(fn)) {
     const data = await new Promise((resolve, reject) => {
       try {
@@ -71,12 +75,16 @@ async function readMeta(fn) {
       }
     });
     meta = yaml.safeLoad(data);
-    const pubPem = keyEncoder.encodePublic(Buffer.from(meta.key, "base64"), "raw", "pem");
+    const pubPem = keyEncoder.encodePublic(
+      Buffer.from(meta.key, "base64"),
+      "raw",
+      "pem"
+    );
     const sig = crypto.createVerify("sha512");
     sig.update(JSON.stringify(meta.users));
     if (!sig.verify(pubPem, Buffer.from(meta.sig, "base64"))) {
       throw new Error("Invalid meta signature");
-    };
+    }
     const ux = meta.users.filter(user => user.pub === upub)[0];
     if (!ux) {
       throw new Error("Dont have access to it");
@@ -121,18 +129,23 @@ async function readMeta(fn) {
 }
 
 async function updateUser(meta, users) {
+  const { config, ukey, upub } = getConfig();
   const key = crypto.createECDH("secp256k1");
   key.generateKeys();
   aesKey = crypto.randomBytes(32);
   users.forEach(user => {
-    const pubPem = keyEncoder.encodePublic(Buffer.from(user.pub, "base64"), "raw", "pem");
+    const pubPem = keyEncoder.encodePublic(
+      Buffer.from(user.pub, "base64"),
+      "raw",
+      "pem"
+    );
     const sig = crypto.createVerify("sha512");
     sig.update(
       JSON.stringify({ user: user.user, email: user.email, pub: user.pub })
     );
     if (!sig.verify(pubPem, Buffer.from(user.sig, "base64"))) {
       throw new Error(`Invalid user signature for ${JSON.stringify(user)}`);
-    };
+    }
     const aes = crypto.createCipheriv(
       "aes256",
       key.computeSecret(Buffer.from(user.pub, "base64")),
@@ -155,7 +168,7 @@ async function updateUser(meta, users) {
 
 async function decrypt(fn, meta, aesKey, output) {
   if (!fs.existsSync(fn)) {
-    return; 
+    return;
   }
   const aesd = crypto.createDecipheriv(
     "aes256",
@@ -297,6 +310,7 @@ program
   .command("user [file]")
   .description("edit file users")
   .action(async fn => {
+    const { config } = getConfig();
     if (!fn) {
       program.help();
       process.exit(1);
@@ -334,7 +348,7 @@ program
       );
       execSync(`${config.editor} ${ftmpMeta}`);
       const users = JSON.parse(fs.readFileSync(ftmpMeta));
-      const { meta: nmeta , aesKey: naesKey } = await updateUser(meta, users);
+      const { meta: nmeta, aesKey: naesKey } = await updateUser(meta, users);
       await encrypt(fn, nmeta, naesKey, ftmp);
       fs.unlinkSync(ftmp);
       fs.unlinkSync(ftmpMeta);
@@ -374,6 +388,7 @@ program
   .command("edit [file]")
   .description("edit encrypted file")
   .action(async fn => {
+    const { config } = getConfig();
     if (!fn) {
       program.help();
       process.exit(1);
