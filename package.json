@@ -1,6 +1,6 @@
 {
   "name": "seno-encryptor",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "encrypt/decrypt cli",
   "main": "app.js",
   "repository": "https://github.com/senomas/encryptor.git",
