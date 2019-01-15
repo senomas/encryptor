@@ -5,26 +5,146 @@ const path = require("path");
 const crypto = require("crypto");
 const stream = require("stream");
 const KeyEncoder = require("key-encoder");
-const fconfig = path.join(os.homedir(), ".seno-encryptor");
 const execSync = require("child_process").execSync;
 const yaml = require("js-yaml");
-const readline = require("readline");
+
+const fconfig = path.join(os.homedir(), ".seno-encryptor");
+if (!fs.existsSync(fconfig)) {
+  console.log("config not exist. init first");
+  process.exit(1);
+}
+const config = JSON.parse(fs.readFileSync(fconfig));
+const ukey = crypto.createECDH("secp256k1");
+ukey.setPrivateKey(config.key, "base64");
+const upub = ukey.getPublicKey("base64");
 
 async function readMeta(fn) {
-  const rl = readline.createInterface({
-    input: fs.createReadStream(fn),
-    crlfDelay: Infinity
-  });
-  const metas = [];
-  return await new Promise((resolve, reject) => {
-    rl.on("line", line => {
-      if (line.length === 0) {
-        resolve(yaml.safeLoad(metas.join("\n")));
-        rl.close();
-      } else {
-        metas.push(line);
+  let meta;
+  let aesKey;
+  if (fs.existsSync(fn)) {
+    const data = await new Promise((resolve, reject) => {
+      try {
+        const input = fs.createReadStream(fn);
+        const lines = [];
+        let buf;
+        let ndone = true;
+        input.on("data", chunk => {
+          if (buf) {
+            buf = Buffer.concat([buf, chunk]);
+          } else {
+            buf = chunk;
+          }
+          const bline = buf.toString("utf8").split("\n");
+          if (bline.length > 1) {
+            buf = Buffer.from(bline.slice(-1)[0], "utf8");
+            bline.slice(0, -1).forEach(bl => {
+              if (ndone) {
+                if (bl.length > 0) {
+                  lines.push(bl);
+                } else {
+                  ndone = false;
+                  input.close();
+                  resolve(lines.join("\n"));
+                }
+              }
+            });
+            lines.push(...bline.slice(0, -1));
+          }
+        });
+        input.on("end", () => {
+          resolve(null);
+        });
+      } catch (err) {
+        reject(err);
       }
     });
+    meta = yaml.safeLoad(data);
+    const ux = meta.users.filter(user => user.pub === upub)[0];
+    if (!ux) {
+      console.log("Dont have access to it");
+      process.exit(1);
+    }
+    const aesd = crypto.createDecipheriv(
+      "aes256",
+      ukey.computeSecret(Buffer.from(meta.key, "base64")),
+      Buffer.from(meta.key, "base64").slice(0, 16)
+    );
+    aesKey = Buffer.concat([
+      aesd.update(Buffer.from(ux.enc, "base64")),
+      aesd.final()
+    ]);
+  } else {
+    const key = crypto.createECDH("secp256k1");
+    key.generateKeys();
+    aesKey = crypto.randomBytes(32);
+    const user = {
+      user: config.user,
+      email: config.email,
+      pub: ukey.getPublicKey("base64"),
+      sig: config.sig
+    };
+    const aes = crypto.createCipheriv(
+      "aes256",
+      key.computeSecret(Buffer.from(user.pub, "base64")),
+      key.getPublicKey().slice(0, 16)
+    );
+    user.enc = Buffer.concat([aes.update(aesKey), aes.final()]).toString(
+      "base64"
+    );
+    const keyEncoder = new KeyEncoder("secp256k1");
+    const pkeyPem = keyEncoder.encodePrivate(key.getPrivateKey(), "raw", "pem");
+    const sig = crypto.createSign("sha512");
+    sig.update(JSON.stringify([user]));
+    meta = {
+      key: key.getPublicKey("base64"),
+      users: [user],
+      sig: sig.sign(pkeyPem, "base64")
+    };
+  }
+  return { meta, aesKey };
+}
+
+async function decrypt(fn, meta, aesKey, output) {
+  const aesd = crypto.createDecipheriv(
+    "aes256",
+    aesKey,
+    Buffer.from(meta.key, "base64").slice(0, 16)
+  );
+  const data = await new Promise((resolve, reject) => {
+    try {
+      const input = fs.createReadStream(fn);
+      let buf;
+      let data = false;
+      input.on("data", chunk => {
+        if (buf) {
+          buf = Buffer.concat([buf, chunk]);
+        } else {
+          buf = chunk;
+        }
+        const bline = buf.toString("utf8").split("\n");
+        if (bline.length > 1) {
+          buf = Buffer.from(bline.slice(-1)[0], "utf8");
+          bline.slice(0, -1).forEach(bl => {
+            if (data) {
+              output.write(
+                aesd.update(Buffer.from(bl, "base64")).toString("utf8")
+              );
+            } else {
+              if (bl.length === 0) {
+                data = true;
+              }
+            }
+          });
+        }
+      });
+      input.on("end", () => {
+        output.write(aesd.update(buf).toString("utf8"));
+        output.write(aesd.final().toString("utf8"));
+        resolve();
+      });
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 
@@ -50,7 +170,8 @@ program
       user,
       email,
       sig: sig.sign(pkeyPem, "base64"),
-      key: key.getPrivateKey("base64")
+      key: key.getPrivateKey("base64"),
+      editor: "code --wait"
     };
     fs.writeFileSync(fconfig, JSON.stringify(config, undefined, 2));
   });
@@ -59,13 +180,6 @@ program
   .command("invite")
   .description("create request command")
   .action(() => {
-    if (!fs.existsSync(fconfig)) {
-      console.log("config not exist. init first");
-      process.exit(1);
-    }
-    const config = JSON.parse(fs.readFileSync(fconfig));
-    const ukey = crypto.createECDH("secp256k1");
-    ukey.setPrivateKey(config.key, "base64");
     const invite = {
       user: config.user,
       email: config.email,
@@ -134,65 +248,12 @@ program
   .command("cat [file]")
   .description("view encrypted file")
   .action(async fn => {
-    if (!fs.existsSync(fconfig)) {
-      console.log("config not exist. init first");
+    if (!fs.existsSync(fn)) {
+      console.log(`file ${fn} not exist`);
       process.exit(1);
     }
-    const config = JSON.parse(fs.readFileSync(fconfig));
-    const ukey = crypto.createECDH("secp256k1");
-    ukey.setPrivateKey(config.key, "base64");
-    const upub = ukey.getPublicKey("base64");
-    const users = [];
-    const ftmp = path.join(
-      path.dirname(fn),
-      path.basename(fn, path.extname(fn)) + ".encryptor" + path.extname(fn)
-    );
-    const meta = await readMeta(fn);
-    const ux = meta.users.filter(user => user.pub === upub)[0];
-    if (!ux) {
-      console.log("Dont have access to it");
-      process.exit(1);
-    }
-    let aesd = crypto.createDecipheriv(
-      "aes256",
-      ukey.computeSecret(Buffer.from(meta.key, "base64")),
-      Buffer.from(meta.key, "base64").slice(0, 16)
-    );
-    const aesKey = Buffer.concat([
-      aesd.update(Buffer.from(ux.enc, "base64")),
-      aesd.final()
-    ]);
-    aesd = crypto.createDecipheriv(
-      "aes256",
-      aesKey,
-      Buffer.from(meta.key, "base64").slice(0, 16)
-    );
-    let state = 0;
-    const output = fs.createWriteStream(ftmp);
-    const bufs = [];
-    await new Promise(resolve => {
-      const rl = readline.createInterface({
-        input: fs.createReadStream(fn),
-        crlfDelay: Infinity
-      });
-      rl.on("line", line => {
-        if (state === 0) {
-          if (line.length === 0) {
-            state = 1;
-          }
-        } else {
-          if (line.length > 0) {
-            process.stdout.write(
-              aesd.update(Buffer.from(line, "base64")).toString("utf8")
-            );
-          }
-        }
-      });
-      rl.on("close", () => {
-        process.stdout.write(aesd.final().toString("utf8"));
-        resolve();
-      });
-    });
+    const { meta, aesKey } = await readMeta(fn);
+    await decrypt(fn, meta, aesKey, process.stdout);
     console.log();
   });
 
@@ -200,111 +261,12 @@ program
   .command("edit [file]")
   .description("edit encrypted file")
   .action(async fn => {
-    if (!fs.existsSync(fconfig)) {
-      console.log("config not exist. init first");
-      process.exit(1);
-    }
-    const config = JSON.parse(fs.readFileSync(fconfig));
-    const ukey = crypto.createECDH("secp256k1");
-    ukey.setPrivateKey(config.key, "base64");
-    const upub = ukey.getPublicKey("base64");
+    const { meta, aesKey } = await readMeta(fn);
     const ftmp = path.join(
       path.dirname(fn),
       path.basename(fn, path.extname(fn)) + ".encryptor" + path.extname(fn)
     );
-    const { meta, aesKey } = await (async () => {
-      if (fs.existsSync(fn)) {
-        const meta = await readMeta(fn);
-        const ux = meta.users.filter(user => user.pub === upub)[0];
-        if (!ux) {
-          console.log("Dont have access to it");
-          process.exit(1);
-        }
-        let aesd = crypto.createDecipheriv(
-          "aes256",
-          ukey.computeSecret(Buffer.from(meta.key, "base64")),
-          Buffer.from(meta.key, "base64").slice(0, 16)
-        );
-        const aesKey = Buffer.concat([
-          aesd.update(Buffer.from(ux.enc, "base64")),
-          aesd.final()
-        ]);
-        aesd = crypto.createDecipheriv(
-          "aes256",
-          aesKey,
-          Buffer.from(meta.key, "base64").slice(0, 16)
-        );
-        const rl = readline.createInterface({
-          input: fs.createReadStream(fn),
-          crlfDelay: Infinity
-        });
-        let state = 0;
-        const output = fs.createWriteStream(ftmp);
-        await new Promise(resolve => {
-          rl.on("line", line => {
-            if (state === 0) {
-              if (line.length === 0) {
-                state = 1;
-              }
-            } else {
-              if (line.length > 0) {
-                output.write(
-                  aesd.update(Buffer.from(line, "base64")).toString("utf8")
-                );
-              }
-            }
-          });
-          rl.on("close", () => {
-            output.write("\n\n-----CLOSE-----\n\n");
-            output.write(aesd.final().toString("utf8"));
-            resolve();
-          });
-        });
-        return { meta, aesKey };
-      } else {
-        const key = crypto.createECDH("secp256k1");
-        key.generateKeys();
-        const aesKey = crypto.randomBytes(32);
-        const user = {
-          user: config.user,
-          email: config.email,
-          pub: ukey.getPublicKey("base64"),
-          sig: config.sig
-        };
-        const aes = crypto.createCipheriv(
-          "aes256",
-          key.computeSecret(Buffer.from(user.pub, "base64")),
-          key.getPublicKey().slice(0, 16)
-        );
-        user.enc = Buffer.concat([aes.update(aesKey), aes.final()]).toString(
-          "base64"
-        );
-        const keyEncoder = new KeyEncoder("secp256k1");
-        const pkeyPem = keyEncoder.encodePrivate(
-          key.getPrivateKey(),
-          "raw",
-          "pem"
-        );
-        const sig = crypto.createSign("sha512");
-        sig.update(JSON.stringify([user]));
-        return {
-          meta: {
-            key: key.getPublicKey("base64"),
-            users: [user],
-            sig: sig.sign(pkeyPem, "base64")
-          },
-          aesKey
-        };
-      }
-    })();
-
-    // execSync(`code --wait ${ftmp}`);
-    await new Promise((resolve, reject) => {
-      const fi = fs.createReadStream("app.js");
-      const fo = fs.createWriteStream(ftmp);
-      fi.pipe(fo);
-      fi.on("end", () => resolve());
-    });
+    execSync(`${config.editor} ${ftmp}`);
 
     const aes = crypto.createCipheriv(
       "aes256",
@@ -319,21 +281,17 @@ program
     output.write("\n");
 
     await new Promise((resolve, reject) => {
-      input
-        .pipe(
-          new stream.Transform({
-            transform(chunk, encoding, callback) {
-              callback(null, aes.update(chunk).toString("base64") + "\n");
-            }
-          })
-        )
-        .pipe(output);
-      input.on("close", () => {
-        resolve()
+      input.on("data", chunk => {
+        output.write(aes.update(chunk).toString("base64"));
+        output.write("\n");
+      });
+      input.on("end", () => {
+        output.write(aes.final().toString("base64"));
+        output.write("\n");
+        resolve();
       });
     });
-    output.write(aes.final().toString("base64") + "\n");
-    // fs.unlinkSync(ftmp);
+    fs.unlinkSync(ftmp);
   });
 
 program.parse(process.argv);
