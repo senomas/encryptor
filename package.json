@@ -1,13 +1,15 @@
 {
-  "name": "encryptor",
-  "version": "1.0.0",
+  "name": "seno-encryptor",
+  "version": "1.0.1",
   "description": "encrypt/decrypt cli",
   "main": "app.js",
   "repository": "https://github.com/senomas/encryptor.git",
   "author": "denmaseno <agus@senomas.com>",
   "license": "MIT",
   "preferGlobal": true,
-  "bin": "./app.js",
+  "bin": {
+    "senc": "./app.js"
+  },
   "dependencies": {
     "commander": "^2.19.0",
     "js-yaml": "^3.12.1",
