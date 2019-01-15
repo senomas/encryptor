@@ -1,0 +1,12 @@
+{
+  "name": "encryptor",
+  "version": "0.9.0",
+  "description": "encrypt/decrypt cli",
+  "main": "app.js",
+  "repository": "https://github.com/senomas/encryptor.git",
+  "author": "denmaseno <agus@senomas.com>",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^2.19.0"
+  }
+}
