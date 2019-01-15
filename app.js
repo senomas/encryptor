@@ -12,9 +12,9 @@ const execSync = require("child_process").execSync;
 const yaml = require("js-yaml");
 
 const keyEncoder = new KeyEncoder("secp256k1");
+const fconfig = path.join(os.homedir(), ".seno-encryptor");
 
 function getConfig() {
-  const fconfig = path.join(os.homedir(), ".seno-encryptor");
   if (!fs.existsSync(fconfig)) {
     console.log("config not exist. init first");
     process.exit(1);
@@ -297,10 +297,11 @@ program
   .command("invite")
   .description("create request command")
   .action(() => {
+    const { config, upub } = getConfig();
     const invite = {
       user: config.user,
       email: config.email,
-      pub: ukey.getPublicKey("base64"),
+      pub: upub,
       sig: config.sig
     };
     console.log(JSON.stringify(invite, undefined, 2));
@@ -321,11 +322,11 @@ program
     }
     const ftmp = path.join(
       path.dirname(fn),
-      path.basename(fn, path.extname(fn)) + ".encryptor" + path.extname(fn)
+      "." + path.basename(fn, path.extname(fn)) + ".encryptor" + path.extname(fn)
     );
     const ftmpMeta = path.join(
       path.dirname(fn),
-      path.basename(fn) + ".encryptor.json"
+      "." + path.basename(fn) + ".encryptor.json"
     );
     try {
       const { meta, aesKey } = await readMeta(fn);
@@ -395,7 +396,7 @@ program
     }
     const ftmp = path.join(
       path.dirname(fn),
-      path.basename(fn, path.extname(fn)) + ".encryptor" + path.extname(fn)
+      "." + path.basename(fn, path.extname(fn)) + ".encryptor" + path.extname(fn)
     );
     try {
       const { meta, aesKey } = await readMeta(fn);
