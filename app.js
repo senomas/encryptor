@@ -108,8 +108,9 @@ program
 
 program.on("command:contact", () => {
   const argv = process.argv;
-  argv[1] = path.join(path.dirname(argv[1]), "contact.js");
+  argv[1] = path.join(__dirname, "contact.js");
   argv.splice(2, 1);
+  debug(argv);
   spawnSync(argv[0], argv.slice(1), {
     stdio: "inherit"
   });
@@ -117,8 +118,9 @@ program.on("command:contact", () => {
 
 program.on("command:user", () => {
   const argv = process.argv;
-  argv[1] = path.join(path.dirname(argv[1]), "user.js");
+  argv[1] = path.join(__dirname, "user.js");
   argv.splice(2, 1);
+  debug(argv);
   spawnSync(argv[0], argv.slice(1), {
     stdio: "inherit"
   });
