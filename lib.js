@@ -83,6 +83,22 @@ async function readMeta(fn) {
     if (!sig.verify(pubPem, Buffer.from(meta.sig, "base64"))) {
       throw new Error("Invalid meta signature");
     }
+    meta.users.forEach(user => {
+      const pubPem = keyEncoder.encodePublic(
+        Buffer.from(user.pub, "base64"),
+        "raw",
+        "pem"
+      );
+      const sig = crypto.createVerify("sha512");
+      const ux = Object.assign({}, user);
+      delete ux.sig;
+      delete ux.enc;
+      sig.update(JSON.stringify(ux));
+      if (!sig.verify(pubPem, Buffer.from(user.sig, "base64"))) {
+        debug(ux);
+        throw new Error(`Invalid user signature for ${user.email}`);
+      }
+    });
     const ux = meta.users.filter(user => user.pub === upub)[0];
     if (!ux) {
       throw new Error("Dont have access to it");

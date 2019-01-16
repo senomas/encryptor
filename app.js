@@ -6,7 +6,7 @@ const program = require("commander");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const execSync = require("child_process").execSync;
+const spawn = require("child_process").spawn;
 const spawnSync = require("child_process").spawnSync;
 
 const {
@@ -82,8 +82,9 @@ program
 
 program
   .command("edit <file>")
+  .option("-e, --editor <editor>")
   .description("edit encrypted file")
-  .action(async fn => {
+  .action(async (fn, options) => {
     const { config } = getConfig();
     const ftmp = path.join(
       path.dirname(fn),
@@ -98,7 +99,15 @@ program
       await decrypt(fn, meta, aesKey, otmp);
       otmp.close();
       await waitStreamClose(otmp);
-      execSync(`${config.editor} ${ftmp}`);
+      const editor = options.editor || config.editor;
+      debug(`exec [${editor} ${ftmp}]`);
+      await new Promise((resolve, reject) => {
+        const child = spawn(editor.split(' ')[0], editor.split(' ').slice(1).concat(ftmp), { stdio: "inherit"});
+        child.on("exit", code => {
+          debug("exit", code);
+          resolve(code);
+        });
+      });
       await encrypt(fn, meta, aesKey, ftmp);
       fs.unlinkSync(ftmp);
     } catch (err) {
