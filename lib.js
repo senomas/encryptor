@@ -101,7 +101,6 @@ async function readMeta(fn) {
     key.generateKeys();
     aesKey = crypto.randomBytes(32);
     const user = {
-      user: config.user,
       email: config.email,
       pub: ukey.getPublicKey("base64"),
       sig: config.sig
@@ -138,11 +137,13 @@ async function updateUser(meta, users) {
       "pem"
     );
     const sig = crypto.createVerify("sha512");
-    sig.update(
-      JSON.stringify({ user: user.user, email: user.email, pub: user.pub })
-    );
+    const ux = Object.assign({}, user);
+    delete ux.sig;
+    delete ux.enc;
+    sig.update(JSON.stringify(ux));
     if (!sig.verify(pubPem, Buffer.from(user.sig, "base64"))) {
-      throw new Error(`Invalid user signature for ${JSON.stringify(user)}`);
+      debug(ux);
+      throw new Error(`Invalid user signature for ${user.email}`);
     }
     const aes = crypto.createCipheriv(
       "aes256",
@@ -276,5 +277,8 @@ module.exports = {
   getConfig, readMeta, updateUser, encrypt, decrypt, waitStreamClose,
   getContacts,
   saveContacts,
+  keyEncoder,
+  fconfig,
+  fcontacts,
   fcontact
 };

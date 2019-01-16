@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 const debug = require("debug")("encryptor");
 
 const fs = require("fs");
@@ -16,24 +14,19 @@ program
   .command("list")
   .description("show contact")
   .action(async fn => {
-    Object.entries(getContacts()).forEach(([alias, user]) => {
-      console.log(alias);
-      console.log(`   ${user.user} <${user.email}>`);
+    Object.entries(getContacts()).forEach(([email, user]) => {
+      console.log(email);
       console.log(`   ${user.pub}`);
     });
   });
 
 program
-  .command("add <alias>")
+  .command("add")
   .description("add contact")
   .option("-f, --force", "Overwrite existing alias")
-  .action(async (alias, options) => {
+  .action(async (options) => {
     const { config } = getConfig();
     const contacts = getContacts();
-    if (contacts[alias] && !options.force) {
-      console.log("contact alias already exist. use --force to overwrite");
-      process.exit(1);
-    }
     try {
       execSync(`${config.editor} ${fcontact}`);
       const user = JSON.parse(fs.readFileSync(fcontact));
@@ -43,13 +36,13 @@ program
         "pem"
       );
       const sig = crypto.createVerify("sha512");
-      sig.update(
-        JSON.stringify({ user: user.user, email: user.email, pub: user.pub })
-      );
+      const ux = Object.assign({}, user);
+      delete ux.sig;
+      sig.update(JSON.stringify(ux));
       if (!sig.verify(pubPem, Buffer.from(user.sig, "base64"))) {
         throw new Error(`Invalid user signature`);
       }
-      contacts[alias] = user;
+      contacts[user.email] = user;
       saveContacts(contacts);
       fs.unlinkSync(fcontact);
     } catch (err) {
@@ -61,7 +54,7 @@ program
   });
 
 program
-  .command("remove <alias>")
+  .command("remove <email>")
   .description("remove contact")
   .action(async (alias, options) => {
     const contacts = getContacts();

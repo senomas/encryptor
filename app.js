@@ -10,6 +10,8 @@ const execSync = require("child_process").execSync;
 const spawnSync = require("child_process").spawnSync;
 
 const {
+  fconfig,
+  keyEncoder,
   getConfig,
   readMeta,
   encrypt,
@@ -18,12 +20,17 @@ const {
 } = require("./lib");
 
 program
-  .command("init <user> <email>")
+  .command("init <email>")
   .description("create asymetric key")
   .option("-f, --force", "Overwrite existing config")
-  .action((user, email, options) => {
+  .action((email, options) => {
     if (fs.existsSync(fconfig) && !options.force) {
       console.log("config already exist. use --force to overwrite");
+      process.exit(1);
+    }
+    const re = /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+    if (!re.test(String(email).toLowerCase())) {
+      console.log("Invalid email");
       process.exit(1);
     }
     const key = crypto.createECDH("secp256k1");
@@ -31,11 +38,8 @@ program
 
     const pkeyPem = keyEncoder.encodePrivate(key.getPrivateKey(), "raw", "pem");
     const sig = crypto.createSign("sha512");
-    sig.update(
-      JSON.stringify({ user, email, pub: key.getPublicKey("base64") })
-    );
+    sig.update(JSON.stringify({ email, pub: key.getPublicKey("base64") }));
     const config = {
-      user,
       email,
       sig: sig.sign(pkeyPem, "base64"),
       key: key.getPrivateKey("base64"),
@@ -50,7 +54,6 @@ program
   .action(() => {
     const { config, upub } = getConfig();
     const invite = {
-      user: config.user,
       email: config.email,
       pub: upub,
       sig: config.sig
@@ -105,6 +108,10 @@ program
       process.exit(1);
     }
   });
+
+program.command("contact [arguments...]").description("manage contacts");
+
+program.command("user [arguments...]").description("manage user access");
 
 program.on("command:contact", () => {
   const argv = process.argv;

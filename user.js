@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 const debug = require("debug")("encryptor");
 
 const program = require("commander");
@@ -18,8 +16,8 @@ const {
 } = require("./lib");
 
 program
-  .command("list <file>")
-  .description("list file users")
+  .command("show <file>")
+  .description("show user access")
   .action(async fn => {
     const { config } = getConfig();
     if (!fs.existsSync(fn)) {
@@ -29,8 +27,7 @@ program
     try {
       const { meta } = await readMeta(fn);
       meta.users.forEach(user => {
-        console.log(user.user);
-        console.log(`   ${user.user} <${user.email}>`);
+        console.log(user.email);
         console.log(`   ${user.pub}`);
       });
     } catch (err) {
@@ -41,8 +38,8 @@ program
   });
 
 program
-  .command("remove <file> <user>")
-  .description("remove file users")
+  .command("remove <file> <email>")
+  .description("remove user access")
   .action(async (fn, username) => {
     const { config } = getConfig();
     if (!fs.existsSync(fn)) {
@@ -77,18 +74,18 @@ program
   });
 
 program
-  .command("add <file> <user-alias>")
-  .description("add file users")
-  .action(async (fn, username) => {
+  .command("add <file> <email>")
+  .description("add user access")
+  .action(async (fn, email) => {
     const { config } = getConfig();
     if (!fs.existsSync(fn)) {
       console.log(`file ${fn} not exist`);
       process.exit(1);
     }
     const contacts = getContacts();
-    const nuser = contacts[username];
+    const nuser = contacts[email];
     if (!nuser) {
-      console.log(`User alias ${username} not exist`);
+      console.log(`User ${email} not exist in your contacts`);
       process.exit(1);
     }
     const ftmp = path.join(
