@@ -248,6 +248,7 @@ async function encrypt(fn, meta, aesKey, ftmp) {
   const output = fs.createWriteStream(fn);
 
   output.write("=== BEGIN SENO-ENCRYPTOR ===\n");
+  output.write("SENO-ENCRYPTOR # https://github.com/senomas/encryptor\n");
   output.write(
     yaml
       .safeDump(meta)
