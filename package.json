@@ -1,8 +1,8 @@
 {
   "name": "seno-encryptor",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "encrypt/decrypt cli",
-  "main": "app.js",
+  "main": "lib.js",
   "repository": "https://github.com/senomas/encryptor.git",
   "author": "denmaseno <agus@senomas.com>",
   "license": "MIT",

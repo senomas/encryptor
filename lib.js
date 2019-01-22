@@ -181,6 +181,11 @@ async function updateUser(meta, users) {
   return { meta, aesKey };
 }
 
+async function readEncrypted(fn) {
+  const { meta, aesKey } = await readMeta(fn);
+  return await decrypt(fn, meta, aesKey, process.stdout);
+}
+
 async function decrypt(fn, meta, aesKey, output) {
   if (!fs.existsSync(fn)) {
     return;
@@ -292,6 +297,7 @@ function saveContacts(contacts) {
 
 module.exports = { 
   getConfig, readMeta, updateUser, encrypt, decrypt, waitStreamClose,
+  readEncrypted,
   getContacts,
   saveContacts,
   keyEncoder,
