@@ -6,13 +6,16 @@ const path = require("path");
 const crypto = require("crypto");
 const KeyEncoder = require("key-encoder");
 const yaml = require("js-yaml");
+const streamBuffers = require("stream-buffers");
 
 const keyEncoder = new KeyEncoder("secp256k1");
-const fconfig = path.join(os.homedir(), ".seno-encryptor");
 const fcontacts = path.join(os.homedir(), ".seno-encryptor-contacts");
 const fcontact = path.join(os.homedir(), ".seno-encryptor-contact.json");
 
-function getConfig() {
+function getConfig(options = {}) {
+  const fconfig = options.config
+    ? options.config
+    : path.join(os.homedir(), ".seno-encryptor");
   if (!fs.existsSync(fconfig)) {
     console.log("config not exist. init first");
     process.exit(1);
@@ -24,10 +27,10 @@ function getConfig() {
   return { config, ukey, upub };
 }
 
-async function readMeta(fn) {
+async function readMeta(fn, options) {
   let meta;
   let aesKey;
-  const { config, ukey, upub } = getConfig();
+  const { config, ukey, upub } = getConfig(options);
   if (fs.existsSync(fn)) {
     const data = await new Promise((resolve, reject) => {
       try {
@@ -141,8 +144,8 @@ async function readMeta(fn) {
   return { meta, aesKey };
 }
 
-async function updateUser(meta, users) {
-  const { config, ukey, upub } = getConfig();
+async function updateUser(meta, users, options) {
+  const { config, ukey, upub } = getConfig(options);
   const key = crypto.createECDH("secp256k1");
   key.generateKeys();
   aesKey = crypto.randomBytes(32);
@@ -181,9 +184,46 @@ async function updateUser(meta, users) {
   return { meta, aesKey };
 }
 
-async function readEncrypted(fn) {
-  const { meta, aesKey } = await readMeta(fn);
-  return await decrypt(fn, meta, aesKey, process.stdout);
+async function readEncrypted(fn, options = {}) {
+  const { meta, aesKey } = await readMeta(fn, options);
+  const buf = new streamBuffers.WritableStreamBuffer();
+  await decrypt(fn, meta, aesKey, buf);
+  return buf.getContentsAsString("utf8");
+}
+
+async function writeEncrypted(fn, input, options = {}) {
+  const { meta, aesKey } = await readMeta(fn, options);
+  const aes = crypto.createCipheriv(
+    "aes256",
+    aesKey,
+    Buffer.from(meta.key, "base64").slice(0, 16)
+  );
+
+  const output = fs.createWriteStream(fn);
+  output.write("=== BEGIN SENO-ENCRYPTOR ===\n");
+  output.write("SENO-ENCRYPTOR # https://github.com/senomas/encryptor\n");
+  output.write(
+    yaml
+      .safeDump(meta)
+      .split("\n")
+      .map(ln => "SENO-ENCRYPTOR " + ln)
+      .join("\n")
+  );
+  output.write("\n=== END SENO-ENCRYPTOR ===\n");
+
+  for (
+    let i = 0, il = input.length, chunkSize = 1024;
+    i < il;
+    i = i + chunkSize
+  ) {
+    const chunk = input.substr(i, chunkSize);
+    output.write(aes.update(chunk).toString("base64"));
+    output.write("\n");
+  }
+  output.write(aes.final().toString("base64"));
+  output.write("\n");
+  output.close();
+  await waitStreamClose(output);
 }
 
 async function decrypt(fn, meta, aesKey, output) {
@@ -295,13 +335,18 @@ function saveContacts(contacts) {
   fs.writeFileSync(fcontacts, JSON.stringify(contacts, undefined, 2));
 }
 
-module.exports = { 
-  getConfig, readMeta, updateUser, encrypt, decrypt, waitStreamClose,
+module.exports = {
+  getConfig,
+  readMeta,
+  updateUser,
+  encrypt,
+  decrypt,
+  waitStreamClose,
   readEncrypted,
+  writeEncrypted,
   getContacts,
   saveContacts,
   keyEncoder,
-  fconfig,
   fcontacts,
   fcontact
 };

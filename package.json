@@ -1,6 +1,6 @@
 {
   "name": "seno-encryptor",
-  "version": "1.0.13",
+  "version": "1.0.18",
   "description": "encrypt/decrypt cli",
   "main": "lib.js",
   "repository": "https://github.com/senomas/encryptor.git",
@@ -14,6 +14,7 @@
     "commander": "^2.19.0",
     "debug": "^4.1.1",
     "js-yaml": "^3.12.1",
-    "key-encoder": "^1.1.7"
+    "key-encoder": "^1.1.7",
+    "stream-buffers": "^3.0.2"
   }
 }

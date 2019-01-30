@@ -2,6 +2,7 @@
 
 const debug = require("debug")("encryptor");
 
+const os = require("os");
 const program = require("commander");
 const fs = require("fs");
 const path = require("path");
@@ -10,7 +11,6 @@ const spawn = require("child_process").spawn;
 const spawnSync = require("child_process").spawnSync;
 
 const {
-  fconfig,
   keyEncoder,
   getConfig,
   readMeta,
@@ -22,8 +22,12 @@ const {
 program
   .command("init <email>")
   .description("create asymetric key")
+  .option("--config <config>")
   .option("-f, --force", "Overwrite existing config")
   .action((email, options) => {
+    const fconfig = options.config
+    ? options.config
+    : path.join(os.homedir(), ".seno-encryptor");
     if (fs.existsSync(fconfig) && !options.force) {
       console.log("config already exist. use --force to overwrite");
       process.exit(1);
@@ -51,8 +55,10 @@ program
 program
   .command("invite")
   .description("create request command")
-  .action(() => {
-    const { config, upub } = getConfig();
+  .option("--config <config>")
+  .action(options => {
+    console.log("CONFIG", { config: options.config });
+    const { config, upub } = getConfig(options);
     const invite = {
       email: config.email,
       pub: upub,
@@ -64,13 +70,14 @@ program
 program
   .command("cat <file>")
   .description("view encrypted file")
-  .action(async fn => {
+  .option("--config <config>")
+  .action(async (fn, options) => {
     if (!fs.existsSync(fn)) {
       console.log(`file ${fn} not exist`);
       process.exit(1);
     }
     try {
-      const { meta, aesKey } = await readMeta(fn);
+      const { meta, aesKey } = await readMeta(fn, options);
       await decrypt(fn, meta, aesKey, process.stdout);
       console.log();
     } catch (err) {
@@ -83,9 +90,10 @@ program
 program
   .command("edit <file>")
   .option("-e, --editor <editor>")
+  .option("--config <config>")
   .description("edit encrypted file")
   .action(async (fn, options) => {
-    const { config } = getConfig();
+    const { config } = getConfig(options);
     const ftmp = path.join(
       path.dirname(fn),
       "." +
@@ -102,7 +110,59 @@ program
       const editor = options.editor || config.editor;
       debug(`exec [${editor} ${ftmp}]`);
       await new Promise((resolve, reject) => {
-        const child = spawn(editor.split(' ')[0], editor.split(' ').slice(1).concat(ftmp), { stdio: "inherit"});
+        const child = spawn(
+          editor.split(" ")[0],
+          editor
+            .split(" ")
+            .slice(1)
+            .concat(ftmp),
+          { stdio: "inherit" }
+        );
+        child.on("exit", code => {
+          debug("exit", code);
+          resolve(code);
+        });
+      });
+      await encrypt(fn, meta, aesKey, ftmp);
+      fs.unlinkSync(ftmp);
+    } catch (err) {
+      debug(err);
+      console.log(err.message);
+      fs.unlinkSync(ftmp);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("enc <file>")
+  .option("--config <config>")
+  .option("-e, --editor <editor>")
+  .description("edit encrypted file")
+  .action(async (fn, options) => {
+    const { config } = getConfig(options);
+    const ftmp = path.join(
+      path.dirname(fn),
+      "." +
+        path.basename(fn, path.extname(fn)) +
+        ".encryptor" +
+        path.extname(fn)
+    );
+    try {
+      const { meta, aesKey } = await readMeta(ftmp);
+      const otmp = fs.createWriteStream(ftmp);
+      fs.createReadStream(fn).pipe(otmp);
+      await waitStreamClose(otmp);
+      const editor = options.editor || config.editor;
+      debug(`exec [${editor} ${ftmp}]`);
+      await new Promise((resolve, reject) => {
+        const child = spawn(
+          editor.split(" ")[0],
+          editor
+            .split(" ")
+            .slice(1)
+            .concat(ftmp),
+          { stdio: "inherit" }
+        );
         child.on("exit", code => {
           debug("exit", code);
           resolve(code);

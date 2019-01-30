@@ -12,6 +12,7 @@ const { getConfig, getContacts, saveContacts, fcontact } = require("./lib");
 
 program
   .command("list")
+  .option("--config <config>")
   .description("show contact")
   .action(async fn => {
     Object.entries(getContacts()).forEach(([email, user]) => {
@@ -22,10 +23,11 @@ program
 
 program
   .command("add")
+  .option("--config <config>")
   .description("add contact")
   .option("-f, --force", "Overwrite existing alias")
   .action(async (options) => {
-    const { config } = getConfig();
+    const { config } = getConfig(options);
     const contacts = getContacts();
     try {
       execSync(`${config.editor} ${fcontact}`);
@@ -55,6 +57,7 @@ program
 
 program
   .command("remove <email>")
+  .option("--config <config>")
   .description("remove contact")
   .action(async (alias, options) => {
     const contacts = getContacts();

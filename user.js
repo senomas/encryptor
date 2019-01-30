@@ -17,9 +17,10 @@ const {
 
 program
   .command("show <file>")
+  .option("--config <config>")
   .description("show user access")
-  .action(async fn => {
-    const { config } = getConfig();
+  .action(async (fn, options) => {
+    const { config } = getConfig(options);
     if (!fs.existsSync(fn)) {
       console.log(`file ${fn} not exist`);
       process.exit(1);
@@ -39,9 +40,10 @@ program
 
 program
   .command("remove <file> <email>")
+  .option("--config <config>")
   .description("remove user access")
-  .action(async (fn, username) => {
-    const { config } = getConfig();
+  .action(async (fn, email, options) => {
+    const { config } = getConfig(options);
     if (!fs.existsSync(fn)) {
       console.log(`file ${fn} not exist`);
       process.exit(1);
@@ -56,7 +58,7 @@ program
     try {
       const { meta, aesKey } = await readMeta(fn);
       const users = meta.users.filter(user => {
-        return user.user !== username;
+        return user.email !== email;
       });
       const { meta: nmeta, aesKey: naesKey } = await updateUser(meta, users);
       const otmp = fs.createWriteStream(ftmp);
@@ -75,9 +77,10 @@ program
 
 program
   .command("add <file> <email>")
+  .option("--config <config>")
   .description("add user access")
-  .action(async (fn, email) => {
-    const { config } = getConfig();
+  .action(async (fn, email, options) => {
+    const { config } = getConfig(options);
     if (!fs.existsSync(fn)) {
       console.log(`file ${fn} not exist`);
       process.exit(1);
