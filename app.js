@@ -26,8 +26,8 @@ program
   .option("-f, --force", "Overwrite existing config")
   .action((email, options) => {
     const fconfig = options.config
-    ? options.config
-    : path.join(os.homedir(), ".seno-encryptor");
+      ? options.config
+      : path.join(os.homedir(), ".seno-encryptor");
     if (fs.existsSync(fconfig) && !options.force) {
       console.log("config already exist. use --force to overwrite");
       process.exit(1);
@@ -128,7 +128,9 @@ program
     } catch (err) {
       debug(err);
       console.log(err.message);
-      fs.unlinkSync(ftmp);
+      if (fs.existsSync(ftmp)) {
+        fs.unlinkSync(ftmp);
+      }
       process.exit(1);
     }
   });
