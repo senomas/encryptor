@@ -19,6 +19,12 @@ const {
   waitStreamClose
 } = require("./lib");
 
+const packageJson = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "package.json"))
+);
+
+program.version(packageJson.version, "-v, --version");
+
 program
   .command("init <email>")
   .description("create asymetric key")

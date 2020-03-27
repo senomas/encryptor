@@ -48,6 +48,7 @@ async function readMeta(fn, options) {
           if (bline.length > 1) {
             buf = Buffer.from(bline.slice(-1)[0], "utf8");
             bline.slice(0, -1).forEach((bl, index) => {
+              bl = bl.trim();
               if (state === 0) {
                 if (bl !== "=== BEGIN SENO-ENCRYPTOR ===") {
                   return reject(new Error(`Invalid file signature - ${index+1} [${bl}]`));
@@ -59,6 +60,8 @@ async function readMeta(fn, options) {
                   resolve(lines.join("\n"));
                 } else if (bl.startsWith("SENO-ENCRYPTOR ")) {
                   lines.push(bl.slice(15));
+                } else if (bl === "SENO-ENCRYPTOR") {
+                  lines.push("");
                 } else {
                   return reject(new Error(`Invalid file signature - ${index+1} [${bl}]`));
                 }
@@ -249,10 +252,10 @@ async function decrypt(fn, meta, aesKey, output) {
         const bline = buf.toString("utf8").split("\n");
         if (bline.length > 1) {
           buf = Buffer.from(bline.slice(-1)[0], "utf8");
-          bline.slice(0, -1).forEach(bl => {
+          bline.slice(0, -1).forEach((bl, index) => {
             if (state === 0) {
               if (bl !== "=== BEGIN SENO-ENCRYPTOR ===") {
-                return reject(new Error("Invalid file signature"));
+                return reject(new Error(`Invalid file signature - ${index+1} [${bl}]`));
               }
               state = 1;
             } else if (state === 1) {
@@ -261,7 +264,7 @@ async function decrypt(fn, meta, aesKey, output) {
               } else if (bl.startsWith("SENO-ENCRYPTOR ")) {
                 // ignore
               } else {
-                return reject(new Error("Invalid file signature"));
+                return reject(new Error(`Invalid file signature - ${index+1} [${bl}]`));
               }
             } else if (state === 2) {
               output.write(
