@@ -47,10 +47,10 @@ async function readMeta(fn, options) {
           const bline = buf.toString("utf8").split("\n");
           if (bline.length > 1) {
             buf = Buffer.from(bline.slice(-1)[0], "utf8");
-            bline.slice(0, -1).forEach(bl => {
+            bline.slice(0, -1).forEach((bl, index) => {
               if (state === 0) {
                 if (bl !== "=== BEGIN SENO-ENCRYPTOR ===") {
-                  return reject(new Error("Invalid file signature"));
+                  return reject(new Error(`Invalid file signature - ${index+1} [${bl}]`));
                 }
                 state = 1;
               } else if (state === 1) {
@@ -60,7 +60,7 @@ async function readMeta(fn, options) {
                 } else if (bl.startsWith("SENO-ENCRYPTOR ")) {
                   lines.push(bl.slice(15));
                 } else {
-                  return reject(new Error("Invalid file signature"));
+                  return reject(new Error(`Invalid file signature - ${index+1} [${bl}]`));
                 }
               }
             });
@@ -68,7 +68,7 @@ async function readMeta(fn, options) {
           }
         });
         input.on("end", () => {
-          return reject(new Error("Invalid file signature"));
+          return reject(new Error("Invalid file signature - no end"));
         });
       } catch (err) {
         debug(err);
