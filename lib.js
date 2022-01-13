@@ -10,7 +10,6 @@ const streamBuffers = require("stream-buffers");
 
 const keyEncoder = new KeyEncoder("secp256k1");
 const fcontacts = path.join(os.homedir(), ".seno-encryptor-contacts");
-const fcontact = path.join(os.homedir(), ".seno-encryptor-contact.json");
 
 function getConfig(options = {}) {
   const fconfig = options.config
@@ -347,6 +346,4 @@ module.exports = {
   getContacts,
   saveContacts,
   keyEncoder,
-  fcontacts,
-  fcontact
 };

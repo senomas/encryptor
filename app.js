@@ -63,7 +63,6 @@ program
   .description("create request command")
   .option("--config <config>")
   .action(options => {
-    console.log("CONFIG", { config: options.config });
     const { config, upub } = getConfig(options);
     const invite = {
       email: config.email,

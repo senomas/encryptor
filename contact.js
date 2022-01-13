@@ -1,10 +1,12 @@
 const debug = require("debug")("encryptor");
 
 const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const program = require("commander");
-const execSync = require("child_process").execSync;
 const crypto = require("crypto");
 const KeyEncoder = require("key-encoder");
+const spawn = require("child_process").spawn;
 
 const keyEncoder = new KeyEncoder("secp256k1");
 
@@ -23,15 +25,31 @@ program
 
 program
   .command("add")
+  .option("-e, --editor <editor>")
   .option("--config <config>")
   .description("add contact")
   .option("-f, --force", "Overwrite existing alias")
   .action(async (options) => {
     const { config } = getConfig(options);
     const contacts = getContacts();
+    const ftmp = path.join(os.tmpdir(), ".seno-encryptor-contact.json");
     try {
-      execSync(`${config.editor} ${fcontact}`);
-      const user = JSON.parse(fs.readFileSync(fcontact));
+      const editor = options.editor || config.editor;
+      await new Promise((resolve, reject) => {
+        const child = spawn(
+          editor.split(" ")[0],
+          editor
+            .split(" ")
+            .slice(1)
+            .concat(ftmp),
+          { stdio: "inherit" }
+        );
+        child.on("exit", code => {
+          debug("exit", code);
+          resolve(code);
+        });
+      });
+      const user = JSON.parse(fs.readFileSync(ftmp));
       const pubPem = keyEncoder.encodePublic(
         Buffer.from(user.pub, "base64"),
         "raw",
@@ -46,11 +64,11 @@ program
       }
       contacts[user.email] = user;
       saveContacts(contacts);
-      fs.unlinkSync(fcontact);
+      fs.unlinkSync(ftmp);
     } catch (err) {
       debug(err);
       console.log(err.message);
-      fs.unlinkSync(fcontact);
+      fs.unlinkSync(ftmp);
       process.exit(1);
     }
   });
