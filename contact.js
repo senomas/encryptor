@@ -1,7 +1,6 @@
 const debug = require("debug")("encryptor");
 
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const program = require("commander");
 const crypto = require("crypto");
@@ -32,7 +31,7 @@ program
   .action(async (options) => {
     const { config } = getConfig(options);
     const contacts = getContacts();
-    const ftmp = path.join(os.tmpdir(), ".seno-encryptor-contact.json");
+    const ftmp = path.join(path.resolve("."), ".seno-encryptor-contact.json");
     try {
       const editor = options.editor || config.editor;
       await new Promise((resolve, reject) => {
@@ -49,26 +48,30 @@ program
           resolve(code);
         });
       });
-      const user = JSON.parse(fs.readFileSync(ftmp));
-      const pubPem = keyEncoder.encodePublic(
-        Buffer.from(user.pub, "base64"),
-        "raw",
-        "pem"
-      );
-      const sig = crypto.createVerify("sha512");
-      const ux = Object.assign({}, user);
-      delete ux.sig;
-      sig.update(JSON.stringify(ux));
-      if (!sig.verify(pubPem, Buffer.from(user.sig, "base64"))) {
-        throw new Error(`Invalid user signature`);
+      if (fs.existsSync(ftmp)) {
+        const user = JSON.parse(fs.readFileSync(ftmp));
+        const pubPem = keyEncoder.encodePublic(
+          Buffer.from(user.pub, "base64"),
+          "raw",
+          "pem"
+        );
+        const sig = crypto.createVerify("sha512");
+        const ux = Object.assign({}, user);
+        delete ux.sig;
+        sig.update(JSON.stringify(ux));
+        if (!sig.verify(pubPem, Buffer.from(user.sig, "base64"))) {
+          throw new Error(`Invalid user signature`);
+        }
+        contacts[user.email] = user;
+        saveContacts(contacts);
+        fs.unlinkSync(ftmp);
       }
-      contacts[user.email] = user;
-      saveContacts(contacts);
-      fs.unlinkSync(ftmp);
     } catch (err) {
       debug(err);
       console.log(err.message);
-      fs.unlinkSync(ftmp);
+      if (fs.existsSync(ftmp)) {
+        fs.unlinkSync(ftmp);
+      }
       process.exit(1);
     }
   });
